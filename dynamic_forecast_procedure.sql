@@ -48,29 +48,18 @@ freq=parameters$value[parameters$key %in% "FREQUENCY"]
 
 ## UI drop-down menu - 1. daily, 2. daily - business days only, 3. weekly, 4. monthly, 5. quarterly, 6. annual
 user_input_freq=parameters$value[parameters$key %in% "FREQUENCY_TYPE"] 
-# UI tick-box if want to regress on holiday data (default yes) 
-# use_holiday_data=parameters$value[parameters$key %in% "HOLIDAY"] # 1 (yes) or 0 (no)
 
 # Step 1. Estimate period & return WARNING if user input probably incorrect
 freq_warning<-0 # assume user_input_period is correct. Insert flag into diagnos
+freq_estimate<-0 # initialise
 freq_estimate<-guess_period(DATE_ID)
+
 if (freq_estimate != user_input_freq){
 freq_warning<-1  # potentially entered wrong frequency
 }
-type_to_freq<-function(freq_type)
-{
-  switch(freq_type,
-         "1" = 365.25,
-         "2" = 261,
-         "3" = 52,
-         "4" = 12,
-         "5" = 4,
-         "6" = 1)
-}
-freq_ts<-365 # default
-freq_ts<-type_to_freq(user_input_freq)
-freq_type<-user_input_freq
 
+# Get freq_descrip and freq_ts (frequency setting, assuming an annual cycle)
+#Functions: type_to_freq and type_to_descrip
 type_to_descrip<-function(freq_type)
 {
   switch(freq_type,
@@ -82,9 +71,24 @@ type_to_descrip<-function(freq_type)
          "6" = "years")
 }
 
-freq_descrip<-type_to_descrip(user_input_freq)
+type_to_freq<-function(freq_type)
+{
+  switch(freq_type,
+         "1" = 365.25,
+         "2" = 261,
+         "3" = 52,
+         "4" = 12,
+         "5" = 4,
+         "6" = 1)
+}
 
-# smoothing function
+freq_type<-user_input_freq
+freq_descrip<-type_to_descrip(user_input_freq)
+freq_ts<-365 # default
+freq_ts<-type_to_freq(user_input_freq)
+
+# Smooth data
+# Function: calc_mean_indices - smoothing function
 calc_mean_indices<-function(index){
   mean(actuals[(index-3):index])
 }
@@ -100,27 +104,21 @@ if(smooth==1){ ## smoothing
 TOTAL=c(timeseries$TOTAL)
 len_time_series<-length(actuals)
 
-# OPTION: synthesize all dates between start and end, and fill in with NA if user hasnt supplied a date
-# then, use tsclean() to impute those values
-# use for 7 days, and for 5 days just remove bizdays..and add NA for public holidays. Then use holiday vector in xreg
-
-# set dates
+# set date variables for training and horizon data
 first_train_date=as.Date(DATE_ID[1],"%d/%m/%Y")
 train_end_date<-as.Date(DATE_ID[length(DATE_ID)] ,"%d/%m/%Y")  # length first_training_dates gives the index of the last day of training data
-## get horizon
 horizon_start_date=train_end_date+1
 
-#length.out not working
-#horizon_dates_seq<-seq(from=horizon_start_date, length.out=hor, by=1)
-
-# 15 years worth of values (e.g. 15*365, or 15*52 etc
-end_date<-horizon_start_date+15*freq_ts
+# sequence dates for horizon period
+#horizon_dates_seq<-seq(from=horizon_start_date, length.out=hor, by=1) #length.out not working
+end_date<-horizon_start_date+15*freq_ts # 15 years worth of values (e.g. 15*365, or 15*52 etc
 horizon_sequence_dates <- seq(from=horizon_start_date, to=end_date, by=freq_descrip)  ## set "by" to be days, weeks, months etc
 horiz_dates<-horizon_sequence_dates[1:hor]
 horizon_end_date=horiz_dates[hor] # last date
 
 # set default values for diagnostic flags
-variables=-1  # default flag value.
+variables_error_value=-1  # value informs type of error
+variables_error_flag<-0 # assume no errors
 nrow_variable_df<-0 # default flag value
 nrow_xreg<-0  # for diagnostics
 nrow_new_xreg<-0
@@ -131,42 +129,49 @@ ncol_new_xreg<-0
 xreg_select<-NULL # test that works  
 new_xreg_select<-NULL 
 
-# create variable matrix 
-if (num_var==0){
-  variables<-0
+num_col_var<-(ncol(variable_matrix)-1)  # number of variable columns
+
+if (num_var==0){  # num_var tells us if we want variables or not
+  variables_error_value<-0
 } else {  
   	# create variable data frame
   	DATES<-c(variable_matrix$DATEI)
-  	VAR1<-c(variable_matrix$VAR1)
+  	VAR1<-c(variable_matrix$VAR1) 	
   	VAR2<-c(variable_matrix$VAR2)
   	VAR3<-c(variable_matrix$VAR3)
-  	variable_df<-data.frame(DATES, VAR1, VAR2, VAR3)
-  	colnames(variable_df)<-c("date", "value1", "value2", "value3")  
+ 	variable_df<-data.frame(DATES, VAR1, VAR2, VAR3)
+  	colnames(variable_df)<-c("date", "value1", "value2", "value3")    	
   	nrow_variable_df<-nrow(variable_df)  #diagnostic
+  								
+    #variable_df_select<-data_frame_select(variable_df, first_train_date, horizon_end_date, num_var) # get all columns       	
+	# select rows based on dates matching time series dates & remove duplicates
+	xreg_select<-data_frame_select(variable_df, first_train_date, train_end_date, num_var)
+	xreg_select_no_dups<-xreg_select[!duplicated(lapply(xreg_select, summary))]
+	new_xreg_select<-data_frame_select(variable_df, horizon_start_date, horizon_end_date, num_var)  
+	new_xreg_select_no_dups<-new_xreg_select[!duplicated(lapply(new_xreg_select, summary))]
+	
+	if(ncol(xreg_select_no_dups)!=ncol(new_xreg_select_no_dups)){
+		variables_error_flag<-1  # set error
+		variables_error_value<-4  # there is a redundant column in either xreg, or new_xreg 
+	}else if (!identical(xreg_select$date,DATE_ID) | !identical(new_xreg_select$date,horiz_dates)){
+		variables_error_flag<-1
+	 	variables_error_value<-3 # dates do not match
+	}
 
-    # remove duplicate columns
-    variable_df_select<-data_frame_select(variable_df, first_train_date, horizon_end_date, num_var) # get all columns   
-    variable_df_no_dups<-variable_df_select[!duplicated(lapply(variable_df_select, summary))]
-    	
-	# select rows based on dates matching time series dates
-	xreg_select<-data_frame_select(variable_df_no_dups, first_train_date, train_end_date, num_var)
-	new_xreg_select<-data_frame_select(variable_df_no_dups, horizon_start_date, horizon_end_date, num_var)  
-
-	# should update to catch case where xreg_select dates are not same as actual dates... 
-	time_series_df$Date %in% sorted_partial$date )
-	#if (nrow(xreg_select) != length(actuals) | nrow(new_xreg_select) != hor){     # variable dates not in range of forecast
-	if (identical(xreg_select$date,DATE_ID) & identical(new_xreg_select$date,horiz_dates)){     # variable dates not in range of forecast	
-    	variables<-1 # success, do not alter xreg_select and new_xreg_select  	
+	if(variables_error_flag==0){     # variable dates match actuals and horizon dates
+		xreg_select<-xreg_select_no_dups
+		new_xreg_select<-new_xreg_select_no_dups
+    	variables_error_value<-1 	  # success	    	
 		nrow_xreg<-nrow(xreg_select)  # for diagnostics
 		nrow_new_xreg<-nrow(new_xreg_select)
 		ncol_xreg<-(ncol(xreg_select)-1)
 		ncol_new_xreg<-(ncol(new_xreg_select)-1)
 	}else{
-		variables<-2   # flag error
 		xreg_select<-NULL # reset to null
 		new_xreg_select<-NULL
- 	} #end else
-} #end else 
+ 	} 
+} #end if num_var>0 
+
 
 ## FUNCTION: set_missing_values: sets values for actuals where missing dates to 0
 set_missing_values<-function(DATE_ID,actuals, freq_type) {
@@ -208,12 +213,16 @@ train_end_val<-sorted_partial$date[nrow(sorted_partial)]  # length first_trainin
 end_date<-as.Date(train_end_val,"%d/%m/%Y")
 # create full set of dates in time series
 full <- seq(from=start_date, to=end_date, by=1)  ## set "by" to be frequency
+
 if(freq_type==2){   # business days only
-full<-full[isWeekday(full)] ## only weekdays
+	full<-full[isWeekday(full)] ## only weekdays
 }
 
-col_dates<-function(col,dates) {col[!complete.cases(col) & !(dates %in% sorted_partial$date)]<-0 ; col}
+# create data frame with full set of dates, and NAs where dates originally missing
 xreg_complete_NA<-data.frame(Date=full,xreg_select[match(full, xreg_select$date),-c(1)])   # added Date back in as gets lost
+
+# Function: col_dates: for an input column, sets the value to 0, if value is NA and date was missing
+col_dates<-function(col,dates) {col[!complete.cases(col) & !(dates %in% sorted_partial$date)]<-0 ; col}
 
 if (ncol(xreg_complete_NA)>2){
 xreg_complete_zero<-apply(xreg_complete_NA[,-c(1)],2, col_dates, dates=xreg_complete_NA$Date)
@@ -245,20 +254,19 @@ actuals<-results_ts_df$value # new actuals (may contain zeros)
 holiday<-results_ts_df$holiday # vector of 1 or 0 for missed values.. 
 len_holiday<-length(holiday[holiday==1])
 
-if(variables==1){  # update xreg
-xreg_select<-set_missing_values_xreg(xreg_select,freq_type) # sets
+if(variables_error_value==1){  # update xreg
+xreg_select<-set_missing_values_xreg(xreg_select,freq_type) # update missing dates in xreg_select
 }
 
 if (length(holiday[holiday==1]) != 0 & length(holiday[holiday==0]) != 0){ # ie not a column of zeros or 1
-if(variables==1){
-xreg_select<-cbind(xreg_select,holiday) ## holiday has FULL Dates, xreg_select has one date missing # think its ok
-new_xreg_select<-cbind(new_xreg_select,holidayf) # add extra variable column as future "skips"
-ncol_xreg_with_holiday<-(ncol(xreg_select)-1) #diagnostic 
+if(variables_error_value==1){
+	xreg_select<-cbind(xreg_select,holiday) ## holiday has FULL Dates, xreg_select has one date missing # think its ok
+	new_xreg_select<-cbind(new_xreg_select,holidayf) # add extra variable column as future "skips"
 } else{
-xreg_select<-cbind(DATE_ID,holiday)
-new_xreg_select<-cbind(DATE_ID,holidayf)
-ncol_xreg_with_holiday<-(ncol(xreg_select)-1) #diagnostic 
+	xreg_select<-cbind(DATE_ID,holiday)
+	new_xreg_select<-cbind(DATE_ID,holidayf)
 }
+ncol_xreg_with_holiday<-(ncol(xreg_select)-1) #diagnostic 
 } # end if holiday
 
 } # end if freq_type==1 or 2
@@ -287,6 +295,10 @@ start=as.Date(cut(first_train_date,"year"))
 num_days=as.integer(first_train_date-start+1) ## modify for weeks, months, years etc..
 start_year=as.numeric(format(first_train_date, "%Y"))
 
+freq_estimate_short=-1  # Default value for flags
+freq_estimate_long=-1
+aic_option=-1 
+aic_value=-1
 
 # Possibly shorter frequencies
 if(freq_type==1){
@@ -298,7 +310,7 @@ freq_ts_short<-5
 ## FUNCTION: forecast_test_daily: call different R forecast function depending on frequency combinations; return forecast
 forecast_test_daily<-function(actuals,freq_test_short,freq_test_long){
   if(freq_test_long ==1){ ## no long frequency
-    time_series<-ts(actuals, frequency=freq_test_short, start=c(start_year, num_steps)) # number of steps(weeks,months,quarters into start_year)
+    time_series<-ts(actuals, frequency=freq_test_short, start=c(start_year, num_days)) # number of steps(weeks,months,quarters into start_year)
     fit<-auto.arima(time_series, xreg=xreg_select[,-c(1)]) 
     fcast<-forecast(fit,h=hor,xreg=new_xreg_select[,-c(1)])
   }else if (freq_test_short ==1 & freq_test_long!=1){
@@ -340,15 +352,18 @@ forecast_best_freq_daily <- function(actuals,freq_ts_short,freq_ts_long){
 
 if(length(actuals)<(2*freq_ts)) { # less than two periods, not going to compare for long (365 day) frequency,auto.arima drops seasonal if no good
 	freq_estimate <- findfrequency(actuals)  
-	time_series<-ts(actuals, frequency=freq_estimate, start=c(start_year, num_steps)) # number of steps(weeks,months,quarters into start_year)
-	fit<-auto.arima(time_series)
-	fcast_arima<-fcast(fit,h=hor)
-	freq_estimate_short<--1  #Not applicable
-	freq_estimate_long<--1
-	aic_option<--1
+	time_series<-ts(actuals, frequency=freq_estimate, start=c(start_year, num_days)) # number of steps(weeks,months,quarters into start_year)
+	#fit<-auto.arima(time_series)
+	#fcast_arima<-forecast(fit,h=hor)
+	fit<-auto.arima(time_series, xreg=xreg_select[,-c(1)]) 
+    fcast_arima<-forecast(fit,h=hor,xreg=new_xreg_select[,-c(1)])
+	best_freq<-freq_estimate # used later to compute accuaracy
+	freq_estimate_short<-best_freq  
+	freq_estimate_long<--1 # N/A
+	aic_option<--0 ## 0
 	aic_value<-fit$aic
 }else{   ## seasonal: return best of frequency estimate and freq=12
-	fcast_list<-forecast_best_freq_daily(actuals,freq_ts_short,freq_ts)
+	fcast_list<-forecast_best_freq_daily(actuals,freq_ts_short,freq_ts) # should pass start_date, num_year
 	fcast_arima<-fcast_list[[1]]
 	freq_estimate_short<-fcast_list[[2]] # useful for diagnostics
 	freq_estimate_long<-fcast_list[[3]]
@@ -379,6 +394,11 @@ get_steps<-function(freq_type){
 } 
 num_steps<-get_steps(freq_type)
 
+freq_estimate_short=-1  # Default value for flags
+freq_estimate_long=-1
+aic_option=-1 
+aic_value=-1
+
 # runs a forecast for a time-series with a given frequency
 forecast_test_weekly_monthly_quarterly<-function(actuals,freq_test){
   time_series<-ts(actuals, frequency=freq_test, start=c(start_year, num_steps)) # number of steps(weeks,months,quarters into start_year)
@@ -402,12 +422,14 @@ forecast_best_freq <- function(actuals,freq_ts){
 if(length(actuals)<(2*freq_ts)) { # less than two periods, not going to compare for 12 month frequency,auto.arima drops seasonal if no good
 	freq_estimate <- findfrequency(actuals)  
 	time_series<-ts(actuals, frequency=freq_estimate, start=c(start_year, num_steps)) # number of steps(weeks,months,quarters into start_year)
-	fit<-auto.arima(time_series)
-	fcast_arima<-fcast(fit,h=hor)
+	#fit<-auto.arima(time_series)
+	#fcast_arima<-forecast(fit,h=hor)
+	fit<-auto.arima(time_series, xreg=xreg_select[,-c(1)]) 
+    fcast_arima<-forecast(fit,h=hor,xreg=new_xreg_select[,-c(1)])
 	best_freq<-freq_estimate # used later to compute accuaracy
-	freq_estimate_short<--1  #Not applicable
-	freq_estimate_long<--1
-	aic_option<--1
+	freq_estimate_short<-best_freq  
+	freq_estimate_long<--1 # N/A
+	aic_option<-0
 	aic_value<-fit$aic
 }else{   ## seasonal: return best of frequency estimate and freq=12
 	fcast_list<-forecast_best_freq(actuals,freq_ts)
@@ -417,14 +439,12 @@ if(length(actuals)<(2*freq_ts)) { # less than two periods, not going to compare 
 	aic_option<-fcast_list[[3]]
 	aic_value<-fcast_list[[4]]
 }  # end else
-
+ 
 # Forecasting done; generate some statistics and output results	
 fcast_accuracy<-accuracy(fcast_arima)
 
 list(fcast_arima=fcast_arima,fcast_accuracy=fcast_accuracy,freq_estimate_short=freq_estimate_short,freq_estimate_long=freq_estimate_long, aic_option=aic_option,aic_value=aic_value)
-}
-
-#generate_forecast_quarterly(){}
+} # end generate_forecast_weekly_monthly_quarterly
 
 #generate_forecast_annually(){}
 
@@ -453,8 +473,7 @@ accuracy_result<-data.frame(
   MEDIAN_APE=Median_APE_validation
 )
 
-# diagnostic results
-### diagnostic resultsCALL executeRForecast("timeSeriesInput2","paramTable", "variableMatrix","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
+### diagnostic results
 
 diagnostic_result<-data.frame(
 HORIZON=hor,
@@ -464,7 +483,7 @@ FREQ_WARNING=freq_warning,
 LEN_HORIZON_DATES=len_new_dates,
 LAST_TRAIN_DATE=train_end_date,
 FIRST_HORIZON_DATE=horizon_start_date,
-VARIABLES=variables,
+VARIABLES_ERROR_VALUE=variables_error_value,
 LEN_TIME_SERIES=len_time_series,
 NROW_VARIABLE_DF=nrow_variable_df,
 NROW_XREG=nrow_xreg,
@@ -500,3 +519,5 @@ horizon_result<-data.frame(
   #TOTAL=as.numeric(fcast2$mean)  
 )
 END;
+
+
