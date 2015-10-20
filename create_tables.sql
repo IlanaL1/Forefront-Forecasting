@@ -41,7 +41,6 @@ INSERT INTO "skiplist" VALUES ('2015-02-23');
 DROP TABLE "forecastHorizon";
 CREATE COLUMN TABLE "forecastHorizon" LIKE "horizon_model" WITH NO DATA;
 
-
 DROP TABLE "diagnosticResult";
 CREATE COLUMN TABLE "diagnosticResult"(
 HORIZON INTEGER,
@@ -51,7 +50,7 @@ FREQ_WARNING INTEGER,
 LEN_HORIZON_DATES INTEGER,
 LAST_TRAIN_DATE DATE,
 FIRST_HORIZON_DATE DATE,
-VARIABLES DOUBLE,
+VARIABLES_ERROR_VALUE DOUBLE,
 LEN_TIME_SERIES DOUBLE,
 NROW_VARIABLE_DF DOUBLE,
 NROW_XREG DOUBLE,
@@ -80,15 +79,27 @@ VALUE	INTEGER
 
 
 DROP TABLE "paramTable";
+-- no variables
 CREATE COLUMN TABLE "paramTable" LIKE "param_model" WITH NO DATA;
 --INSERT into "paramTable" VALUES (1,365,1);
 INSERT INTO "paramTable" VALUES ('HORIZON',30);
 INSERT INTO "paramTable" VALUES ('SMOOTH',1);
-INSERT INTO "paramTable" VALUES ('NUM_VAR',1); 
+INSERT INTO "paramTable" VALUES ('NUM_VAR',0); 
 INSERT INTO "paramTable" VALUES ('FREQUENCY',365);
 INSERT INTO "paramTable" VALUES ('FREQUENCY_TYPE',1);
 INSERT INTO "paramTable" VALUES ('HOLIDAY',1);
 
+-- 1variable
+CREATE COLUMN TABLE "paramTable1" LIKE "param_model" WITH NO DATA;
+--INSERT into "paramTable1" VALUES (1,365,1);
+INSERT INTO "paramTable1" VALUES ('HORIZON',30);
+INSERT INTO "paramTable1" VALUES ('SMOOTH',1);
+INSERT INTO "paramTable1" VALUES ('NUM_VAR',1); 
+INSERT INTO "paramTable1" VALUES ('FREQUENCY',365);
+INSERT INTO "paramTable1" VALUES ('FREQUENCY_TYPE',1);
+INSERT INTO "paramTable1" VALUES ('HOLIDAY',1);
+
+DROP TABLE "paramTable2";
 CREATE COLUMN TABLE "paramTable2" LIKE "param_model" WITH NO DATA;
 --INSERT into "paramTable" VALUES (1,365,1);
 INSERT INTO "paramTable2" VALUES ('HORIZON',30);
@@ -130,14 +141,14 @@ DROP TABLE "variableMatrix3";
 CREATE TABLE "variableMatrix3" as (SELECT * FROM "variableMatrix");
 UPSERT "variableMatrix3" VALUES ('2015-01-22',3,4,5) where DATEI='2015-01-22';
 
+DROP TABLE DS1_01;
+CREATE TABLE DS1_01 as (SELECT "Date" as DATE_ID, "bits" as TOTAL FROM "DS1_Daily_ISP_Traffic_Bits");
+
+DROP TABLE DS2_01;
+CREATE TABLE DS2_01 as (SELECT "Date" as DATE_ID, "FXRates" as TOTAL FROM "DS02_Daily_FXRates");
 
 DROP TABLE "variableMatrix4";
 CREATE TABLE "variableMatrix4" as (SELECT * FROM "variableMatrix2");
 UPSERT "variableMatrix4" VALUES ('2015-01-22',3,4,5) where DATEI='2015-01-22';
 
---CALL CREATE_XREG("timeSeriesInput","variableMatrix","paramTable","xreg","newxreg") WITH OVERVIEW;
---CALL CREATE_XREG("timeSeriesInput","variableMatrix","paramTable","xreg") WITH OVERVIEW;
 
--- just for now
---CALL CREATE_FORECAST("timeSeriesInput","paramTable", "variableMatrix","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
--- can use xreg
