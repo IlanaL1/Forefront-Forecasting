@@ -57,7 +57,13 @@ SELECT * FROM "diagnosticResult";
 
 # Longer time-series (Quebec)
 
+
 # Business Days only Tests...(missing holidays)
+DS02
+
+CALL executeRForecast("DS2_01","paramTable", "variableMatrix","skiplist","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
+SELECT * FROM "forecastHorizon";
+SELECT * FROM "diagnosticResult";
 
 
 # 2 parameters, holiday=0 (no missing dates)
