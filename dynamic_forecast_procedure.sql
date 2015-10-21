@@ -33,8 +33,15 @@ guess_period <- function(x) {
   which.min( difference ) 
 }
 
-DATE_ID=c(timeseries$DATE_ID)
-actuals=c(timeseries$TOTAL)
+DATE_ID_original=c(timeseries$DATE_ID)
+actuals_original=c(timeseries$TOTAL)
+
+# ensure time-series input is sorted
+partial<-data.frame(DATE_ID_original,actuals_original,row.names=NULL)
+colnames(partial)<-c("date","value")
+sorted_partial<-partial[order(as.Date(partial$date, format="%d/%m/%Y")),]
+DATE_ID<-sorted_partial$date 
+actuals<-sorted_partial$value
 
 # get parameters
 parameters_key<-c(param$KEY)
@@ -45,17 +52,25 @@ smooth=parameters$value[parameters$key %in% "SMOOTH"]
 hor=parameters$value[parameters$key %in% "HORIZON"]
 num_var=parameters$value[parameters$key %in% "NUM_VAR"]
 freq=parameters$value[parameters$key %in% "FREQUENCY"]
-
 ## UI drop-down menu - 1. daily, 2. daily - business days only, 3. weekly, 4. monthly, 5. quarterly, 6. annual
 user_input_freq=parameters$value[parameters$key %in% "FREQUENCY_TYPE"] 
 
 # Step 1. Estimate period & return WARNING if user input probably incorrect
-freq_warning<-0 # assume user_input_period is correct. Insert flag into diagnos
+freq_warning<--1 # assume user_input_period is correct. Insert flag into diagnos
 freq_estimate<-0 # initialise
-freq_estimate<-guess_period(DATE_ID)
+#DATE_ID1<-as.Date(DATE_ID,"%d/%m/%Y")
+DATE_ID1<-as.Date(DATE_ID,"%Y-%m-%d")
 
+freq_estimate<-guess_period(DATE_ID1)
+freq_warning<-length(freq_estimate)
+is.wholenumber <-
+     function(x, tol = .Machine$double.eps^0.5)  abs(x - round(x)) < tol
+
+if(length(freq_estimate)>0){ # freq_estimate may not return correct result
+freq_warning<-0
 if (freq_estimate != user_input_freq){
-freq_warning<-1  # potentially entered wrong frequency
+	freq_warning<-1  # potentially entered wrong frequency
+}
 }
 
 # Get freq_descrip and freq_ts (frequency setting, assuming an annual cycle)
@@ -248,11 +263,13 @@ future_skiplist<-as.Date(future_skiplist,format="%d/%m/%Y") # ensure formatting 
 holidayf<-c(rep(0,hor))  # initialise to 0
 holidayf[match(future_skiplist,horiz_dates)]<-1 # set to 1 if in horizdates
 
+library(timeDate)
 results_ts_df<-set_missing_values(DATE_ID,actuals, freq_type) # sets
 DATE_ID<-results_ts_df$Date  # new dates
 actuals<-results_ts_df$value # new actuals (may contain zeros)
 holiday<-results_ts_df$holiday # vector of 1 or 0 for missed values.. 
 len_holiday<-length(holiday[holiday==1])
+len_holidayf<-length(holidayf[holidayf==1])
 
 if(variables_error_value==1){  # update xreg
 xreg_select<-set_missing_values_xreg(xreg_select,freq_type) # update missing dates in xreg_select
@@ -321,8 +338,12 @@ forecast_test_daily<-function(actuals,freq_test_short,freq_test_long){
   }else if (freq_test_short !=1 & freq_test_long!=1){
     n_train<-length(actuals)
     time_series<-ts(actuals, frequency=freq_test_short, start=c(start_year, num_days)) # first value is num_days days into start_year
-    z <- forecast::fourier(ts(actuals, frequency= freq_test_long), K=12) # f=365.25*5/7
-    zf <- forecast::fourierf(ts(actuals, frequency= freq_test_long), K=12, h=hor)
+    k<-12
+	if(k > (freq_test_long/2)){
+  		k<-floor(freq_test_long/2)
+	}
+    z <- forecast::fourier(ts(actuals, frequency= freq_test_long), K=k) # f=365.25*5/7
+    zf <- forecast::fourierf(ts(actuals, frequency= freq_test_long), K=k, h=hor)
     fit <- auto.arima(time_series, xreg=cbind(xreg_select[,-c(1)],z))
     #new_xreg_select=cbind(new_xreg_select,zf) # update new regressors
     fcast<-forecast(fit, xreg=cbind(new_xreg_select[,-c(1)],zf), h=hor)	    
@@ -340,7 +361,8 @@ forecast_best_freq_daily <- function(actuals,freq_ts_short,freq_ts_long){
     "1" = forecast_test_daily(actuals,frequencies_short[1],frequencies_long[1]),
     "2" = forecast_test_daily(actuals,frequencies_short[1],frequencies_long[2]),
     "3" = forecast_test_daily(actuals,frequencies_short[2],frequencies_long[1]),
-    "4" = forecast_test_daily(actuals,frequencies_short[2],frequencies_long[2])   
+    "4" = forecast_test_daily(actuals,frequencies_short[2],frequencies_long[2]),
+    "5" = forecast_test_daily(actuals,1,1)    
   )
   aic_option<-which.min(c(aic[[1]]$model$aic,aic[[2]]$model$aic,aic[[3]]$model$aic,aic[[4]]$model$aic))
   #freq_min_aic<-frequencies[which.min(aic)]  ## select best frequency
@@ -481,8 +503,10 @@ SMOOTH=smooth,
 FREQ_TS=freq_ts,
 FREQ_WARNING=freq_warning,
 LEN_HORIZON_DATES=len_new_dates,
+FIRST_TRAIN_DATE=first_train_date,
 LAST_TRAIN_DATE=train_end_date,
 FIRST_HORIZON_DATE=horizon_start_date,
+LAST_HORIZON_DATE=horizon_end_date,
 VARIABLES_ERROR_VALUE=variables_error_value,
 LEN_TIME_SERIES=len_time_series,
 NROW_VARIABLE_DF=nrow_variable_df,
@@ -495,7 +519,8 @@ FREQ_EST_LONG=freq_estimate_long,
 AIC_OPTION=aic_option,
 AIC_VALUE=aic_value,
 NCOL_XREG_WITH_HOLIDAY = ncol_xreg_with_holiday,
-LEN_HOLIDAY=len_holiday
+LEN_HOLIDAY=len_holiday,
+LEN_HOLIDAYF=len_holidayf
 )
 
 # Actual data, returned as it may have been smoothed

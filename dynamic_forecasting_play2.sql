@@ -55,16 +55,20 @@ CALL executeRForecast("DS1_01","paramTable2", "variableMatrix_DS01_05","skiplist
 SELECT * FROM "forecastHorizon";
 SELECT * FROM "diagnosticResult";
 
-# Longer time-series (Quebec)
+-- Longer time-series (Quebec)
 
 
-# Business Days only Tests...(missing holidays)
-DS02
-
-CALL executeRForecast("DS2_01","paramTable", "variableMatrix","skiplist","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
+-- Business Days only Tests...(missing holidays)
+--DS02
+-- TS01
+CALL executeRForecast("DS2_01","paramTable3", "variableMatrix","skiplist","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
 SELECT * FROM "forecastHorizon";
 SELECT * FROM "diagnosticResult";
 
+--TS02
+CALL executeRForecast("DS2_01","paramTable3", "variableMatrix","skiplist1","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
+SELECT * FROM "forecastHorizon";
+SELECT * FROM "diagnosticResult"
 
 # 2 parameters, holiday=0 (no missing dates)
 CALL executeRForecast("timeSeriesInput2","paramTable2", "variableMatrix3","skiplist","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
