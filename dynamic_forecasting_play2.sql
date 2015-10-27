@@ -11,6 +11,7 @@ CREATE TABLE "variableMatrix_DS01_01" as (SELECT DATE_ID AS DATEI,TEMP as "VAR1"
 CALL executeRForecast("DS1_01","paramTable1", "variableMatrix_DS01_01","skiplist","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
 SELECT * FROM "forecastHorizon";
 SELECT * FROM "diagnosticResult";
+SELECT * FROM "accuracy";
 
 --TS03
 CALL executeRForecast("DS1_01","paramTable2", "variableMatrix_DS01_01","skiplist","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
@@ -51,9 +52,12 @@ DROP TABLE "variableMatrix_DS01_05";
 CREATE TABLE "variableMatrix_DS01_05" as (SELECT * FROM "variableMatrix_DS01_01" where DATEI!='2005-02-03' ORDER BY DATEI);
 SELECT * FROM "variableMatrix_DS01_05" where DATEI > '2005-01-01' ORDER BY DATEI;
 
+
+-- wrong freq_type inputb,gk
 CALL executeRForecast("DS1_01","paramTable2", "variableMatrix_DS01_05","skiplist","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
 SELECT * FROM "forecastHorizon";
 SELECT * FROM "diagnosticResult";
+
 
 -- Longer time-series (Quebec)
 
@@ -63,12 +67,37 @@ SELECT * FROM "diagnosticResult";
 -- TS01
 CALL executeRForecast("DS2_01","paramTable3", "variableMatrix","skiplist","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
 SELECT * FROM "forecastHorizon";
+SELECT * FROM "actuals";
 SELECT * FROM "diagnosticResult";
+SELECT * FROM "accuracy";
 
 --TS02
 CALL executeRForecast("DS2_01","paramTable3", "variableMatrix","skiplist1","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
 SELECT * FROM "forecastHorizon";
-SELECT * FROM "diagnosticResult"
+SELECT * FROM "actuals";
+SELECT * FROM "diagnosticResult";
+SELECT * FROM "accuracy";
+
+--TS03 -- shouldnt be able to use variableMatrix2 because not the same dates.. should R retrieve them?
+DROP TABLE "variableMatrix_DS02_01";
+CREATE TABLE "variableMatrix_DS02_01" as (SELECT DATE_ID AS DATEI,TEMP as "VAR1",TEMP as "VAR2",TEMP as "VAR3" FROM "ILANA"."North_filtered_weather" WHERE DATE_ID >'1979-01-01' ORDER BY DATE_ID);
+CALL executeRForecast("DS2_01","paramTable4", "variableMatrix_DS02_01","skiplist","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
+SELECT * FROM "forecastHorizon";
+SELECT * FROM "diagnosticResult";
+SELECT * FROM "accuracy";
+
+-- wrong num_var in paramTable --- should prompt warning
+CALL executeRForecast("DS2_01","paramTable1", "variableMatrix_DS02_01","skiplist","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
+SELECT * FROM "forecastHorizon";
+SELECT * FROM "diagnosticResult";
+SELECT * FROM "accuracy";
+
+---DS03 - Monthly time series
+CALL executeRForecast("DS3","paramTable5", "variableMatrix","skiplist","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
+SELECT * FROM "forecastHorizon";
+SELECT * FROM "actuals";
+SELECT * FROM "diagnosticResult";
+SELECT * FROM "accuracy";
 
 # 2 parameters, holiday=0 (no missing dates)
 CALL executeRForecast("timeSeriesInput2","paramTable2", "variableMatrix3","skiplist","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
