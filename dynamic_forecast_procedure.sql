@@ -1,67 +1,25 @@
 
+-- Preconditions:
+-- -- variable_matrix must contain columns: DATE, VAR1, VAR2, VAR3 even if empty
+
 DROP PROCEDURE executeRForecast;
 CREATE PROCEDURE executeRForecast(IN timeseries "timeSeriesInput2", IN param "paramTable", IN variable_matrix "variableMatrix", IN future_skip "skiplist", OUT fit_result "forecastFitted", OUT horizon_result "forecastHorizon", OUT actuals_table "actuals", OUT diagnostic_result "diagnosticResult", OUT accuracy_result "accuracy")
 LANGUAGE RLANG AS
---DEFAULT SCHEMA HDITTMER            
 BEGIN
-
-#utility functions - see dplyr
-data_frame_select<-function(input_df,start_date,end_date,num_var){
-  subset(input_df,input_df$date >= start_date & input_df$date <= end_date)[,1:(num_var+1)]
-}
-
-#data_frame_match_dates<-function(input_df,DATE_ID)
-## ideally, subset xreg down to get right dates if user inputs wrong dates
-#input_df[match(input_df$date,DATE_ID),]
-
-#Problem is having "0"s in actuals when there is a holiday...
-Mean_APE_function<-function(actual_values,forecast_values){
-df<-data.frame(A=actual_values,F=forecast_values)
-df_filtered<-df[df$A!=0 & df$F!=0,]
-actual_values_filtered<-df_filtered$A
-forecast_values_filtered<-df_filtered$F
-forecast_error<-abs(forecast_values_filtered - actual_values_filtered)
-APE<-forecast_error/actual_values_filtered * 100
-sum(APE) /length(actual_values_filtered)  ## MAPE
-#mean(forecast_error)
-}
-
-# guess likely time step difference in observations 
-# http://stackoverflow.com/questions/19217729/check-the-frequency-of-time-series-data?rq=1
-guess_period <- function(x) { 
-  #average_period <- as.double( mean(diff(x$date)), units="days" )
-  #average_period <- as.double( mean(diff(index(x))), units="days" )
-  average_period <- as.double( mean(diff(x)), units="days" )
-  
-  difference <- abs(log( average_period / c(
-    daily = 1,
-    business_days = 7/5,
-    weekly = 7,
-    monthly = 30,
-    quarterly = 365/4,
-    annual = 365
-  ) ) )
-  #names( which.min( difference ) )
-  which.min( difference ) 
-}
 
 # libraries
 library("timeDate")
 library("forecast")
+library("utility.forecast")
+library("zoo") # rollapply
 #library("dplyr")
 
+#### Get Input Parameters from Tables
+# timeseries
 DATE_ID_original=c(timeseries$DATE_ID)
 actuals_original=c(timeseries$TOTAL)
 
-# ensure time-series input is sorted
-partial<-data.frame(DATE_ID_original,actuals_original,row.names=NULL)
-colnames(partial)<-c("date","value")
-sorted_partial<-partial[order(as.Date(partial$date, format="%d/%m/%Y")),]
-DATE_ID<-sorted_partial$date 
-actuals<-sorted_partial$value
-last_actual_value<-actuals[length(actuals)]
-
-# get parameters
+#param
 parameters_key<-c(param$KEY)
 parameters_value<-c(param$VALUE)
 parameters<-data.frame(parameters_key, parameters_value)
@@ -73,209 +31,12 @@ freq=parameters$value[parameters$key %in% "FREQUENCY"]
 ## UI drop-down menu - 1. daily, 2. daily - business days only, 3. weekly, 4. monthly, 5. quarterly, 6. annual
 user_input_freq=parameters$value[parameters$key %in% "FREQUENCY_TYPE"] 
 
-# Step 1. Estimate period & return WARNING if user input probably incorrect
-freq_warning<--1 # assume user_input_period is correct. Insert flag into diagnos
-freq_estimate<-0 # initialise
-#DATE_ID1<-as.Date(DATE_ID,"%d/%m/%Y")
-DATE_ID1<-as.Date(DATE_ID,"%Y-%m-%d")
 
-freq_estimate<-guess_period(DATE_ID1)
-freq_warning<-length(freq_estimate)
-is.wholenumber <-
-     function(x, tol = .Machine$double.eps^0.5)  abs(x - round(x)) < tol
-
-freq_type<-user_input_freq
-if(length(freq_estimate)>0){ # freq_estimate may not return correct result
-freq_warning<-0
-if (freq_estimate != user_input_freq){
-	freq_warning<-1  # potentially entered wrong frequency
-	freq_type<-freq_estimate
-	}
-}
-
-# Get freq_descrip and freq_ts (frequency setting, assuming an annual cycle)
-#Functions: type_to_freq and type_to_descrip
-type_to_descrip<-function(freq_type)
-{
-  switch(freq_type,
-         "1" = "days",
-         "2" = "days",
-         "3" = "weeks",
-         "4" = "months",
-         "5" = "quarters",
-         "6" = "years")
-}
-
-type_to_freq<-function(freq_type)
-{
-  switch(freq_type,
-         "1" = 365.25,
-         "2" = 261,
-         "3" = 52,
-         "4" = 12,
-         "5" = 4,
-         "6" = 1)
-}
-
-
-freq_descrip<-type_to_descrip(freq_type)
-freq_ts<-365 # default
-freq_ts<-type_to_freq(freq_type)
-
-# Smooth data
-# Function: calc_mean_indices - smoothing function
-calc_mean_indices<-function(index){
-  mean(actuals[(index-3):index])
-}
-
-if(smooth==1){ ## smoothing
-  actuals_MA<-vector()
-  actuals_MA[1:3]<-actuals[1:3]
-  index_list<-c(4:length(actuals)) # calc averages
-  mean_indices<-sapply(index_list,calc_mean_indices)
-  actuals_MA<-c(actuals_MA,mean_indices)
-  actuals<-actuals_MA
-}
-TOTAL=c(timeseries$TOTAL)
-len_time_series<-length(actuals)
-
-# set date variables for training and horizon data
-first_train_date=as.Date(DATE_ID[1],"%d/%m/%Y")
-train_end_date<-as.Date(DATE_ID[length(DATE_ID)] ,"%d/%m/%Y")  # length first_training_dates gives the index of the last day of training data
-horizon_start_date=train_end_date+1
-
-# sequence dates for horizon period 
-#horizon_dates_seq<-seq(from=horizon_start_date, length.out=hor, by=1) #length.out not working
-end_date<-horizon_start_date+15*365 # 15 years worth of values (e.g. 15*365, or 15*52 etc
-horizon_sequence_dates <- seq(from=horizon_start_date, to=end_date, by=freq_descrip)  ## set "by" to be days, weeks, months etc
-if (freq_type==2){
-	horizon_sequence_dates <-horizon_sequence_dates [isWeekday(horizon_sequence_dates )]
-}
-
-horiz_dates<-horizon_sequence_dates[1:hor]
-horizon_end_date=horiz_dates[hor] # last date
-
-# set default values for diagnostic flags
-variables_error_value=-1  # value informs type of error
-variables_error_flag<-0 # assume no errors
-nrow_variable_df<-0 # default flag value
-nrow_xreg<-0  # for diagnostics
-nrow_new_xreg<-0
-ncol_xreg<-0
-ncol_new_xreg<-0
-
-# set default values for xreg parameters
-xreg_select<-NULL # test that works  
-new_xreg_select<-NULL 
-
-num_col_var<-(ncol(variable_matrix)-1)  # number of variable columns
-
-if (num_var==0){  # num_var tells us if we want variables or not
-  variables_error_value<-0
-} else {  
-  	# create variable data frame
-  	DATES<-c(variable_matrix$DATEI)
-  	VAR1<-c(variable_matrix$VAR1) 	
-  	VAR2<-c(variable_matrix$VAR2)
-  	VAR3<-c(variable_matrix$VAR3)
- 	variable_df<-data.frame(DATES, VAR1, VAR2, VAR3)
-  	colnames(variable_df)<-c("date", "value1", "value2", "value3")    	
-  	nrow_variable_df<-nrow(variable_df)  #diagnostic
-  								
-    #variable_df_select<-data_frame_select(variable_df, first_train_date, horizon_end_date, num_var) # get all columns       	
-	# select rows based on dates matching time series dates & remove duplicates
-	xreg_select<-data_frame_select(variable_df, first_train_date, train_end_date, num_var)
-	xreg_select_no_dups<-xreg_select[!duplicated(lapply(xreg_select, summary))]
-	new_xreg_select<-data_frame_select(variable_df, horizon_start_date, horizon_end_date, num_var)  
-	new_xreg_select_no_dups<-new_xreg_select[!duplicated(lapply(new_xreg_select, summary))]
+# future_skip
+future_skiplist=c(future_skip$DATE_ID) # a list of dates that are set to be holidays in horizon period 
+future_skiplist<-as.Date(future_skiplist,format="%d/%m/%Y") # ensure formatting ok
 	
-	if(ncol(xreg_select_no_dups)!=ncol(new_xreg_select_no_dups)){
-		variables_error_flag<-1  # set error
-		variables_error_value<-4  # there is a redundant column in either xreg, or new_xreg 
-	}else if (!identical(xreg_select_no_dups$date,DATE_ID) | !identical(new_xreg_select_no_dups$date,horiz_dates)){
-		variables_error_flag<-1
-	 	variables_error_value<-3 # dates do not match
-	}
-
-	if(variables_error_flag==0){     # variable dates match actuals and horizon dates
-		xreg_select<-xreg_select_no_dups
-		new_xreg_select<-new_xreg_select_no_dups
-    	variables_error_value<-1 	  # success	    	
-		nrow_xreg<-nrow(xreg_select)  # for diagnostics
-		nrow_new_xreg<-nrow(new_xreg_select)
-		ncol_xreg<-(ncol(xreg_select)-1)
-		ncol_new_xreg<-(ncol(new_xreg_select)-1)
-	}else{
-		xreg_select<-NULL # reset to null
-		new_xreg_select<-NULL
- 	} 
-} #end if num_var>0 
-
-
-## FUNCTION: set_missing_values: sets values for actuals where missing dates to 0
-set_missing_values<-function(DATE_ID,actuals, freq_type) {
- partial<-data.frame(DATE_ID,actuals,row.names=NULL)
-colnames(partial)<-c("date","value")
-# sort partial by date
-sorted_partial<-partial[order(as.Date(partial$date, format="%d/%m/%Y")),]
-first_value<-sorted_partial$date[1] # First time-series point
-first_train_date=as.Date(first_value,"%d/%m/%Y")
-start_date<-first_train_date
-train_end_val<-sorted_partial$date[nrow(sorted_partial)]  
-end_date<-as.Date(train_end_val,"%d/%m/%Y")
-# create full set of dates in time series
-full <- seq(from=start_date, to=end_date, by=1)  ## set "by" to be frequency
-if(freq_type==2){   # business days only
-	full<-full[isWeekday(full)] ## only weekdays
-}
-#create full data frame, wtih missing dates as NAs
-time_series_df<-data.frame(Date=full, value=with(sorted_partial, value[match(full, date)]))
-holiday<-as.integer(!complete.cases(time_series_df$value)) # create holiday as vector 1 if skipped value, 0 if value present
-#time_series_df$value[!complete.cases(time_series_df$value)==TRUE]<-0 #set to 0
-time_series_df$value[!complete.cases(time_series_df$value) & !(time_series_df$Date %in% sorted_partial$date )]<-0 # if date has just been added in this function
-time_series_df<-cbind(time_series_df,holiday)
-colnames(time_series_df)<-c("Date","value","holiday")
-time_series_df
-}
-
-## FUNCTION: set_missing_values_xreg: sets values for columns in xreg where missing dates to 0
-#only call if xreg_select is not null
-set_missing_values_xreg<-function(xreg_select, freq_type) {
-partial<-xreg_select
-#colnames(partial)<-c("date","value")
-# sort partial by date
-sorted_partial<-partial[order(as.Date(partial$date, format="%d/%m/%Y")),]
-first_value<-sorted_partial$date[1] # First time-series point
-first_train_date=as.Date(first_value,"%d/%m/%Y")
-start_date<-first_train_date
-train_end_val<-sorted_partial$date[nrow(sorted_partial)]  # length first_training_dates gives the index of the last day of training data
-end_date<-as.Date(train_end_val,"%d/%m/%Y")
-# create full set of dates in time series
-full <- seq(from=start_date, to=end_date, by=1)  ## set "by" to be frequency
-
-if(freq_type==2){   # business days only
-	full<-full[isWeekday(full)] ## only weekdays
-}
-
-# create data frame with full set of dates, and NAs where dates originally missing
-xreg_complete_NA<-data.frame(Date=full,xreg_select[match(full, xreg_select$date),-c(1)])   # added Date back in as gets lost
-
-# Function: col_dates: for an input column, sets the value to 0, if value is NA and date was missing
-col_dates<-function(col,dates) {col[!complete.cases(col) & !(dates %in% sorted_partial$date)]<-0 ; col}
-
-if (ncol(xreg_complete_NA)>2){
-	xreg_complete_zero<-apply(xreg_complete_NA[,-c(1)],2, col_dates, dates=xreg_complete_NA$Date)
-}else{
-	xreg_complete_zero<-col_dates(xreg_complete_NA[,-c(1)],xreg_complete_NA$Date)
-}
-
-xreg_df<-cbind(xreg_complete_NA$Date,xreg_complete_zero)
-colnames(xreg_df)<-colnames(xreg_select)
-xreg_df
-} # end set_missing_values_xreg
-
-
-# set future dates to "skip" - only for daily data 
+#### Deal with missing dates as "holiday" input
 future_skiplist<-NULL # default
 ncol_xreg_with_holiday<-0
 len_holiday<-0
@@ -284,28 +45,27 @@ holiday_flag<-0
 
 # daily data, and either 0 variables (=0), or successful entry of variables (=1)
 if (freq_type==1 | freq_type ==2) {
-	future_skiplist=c(future_skip$DATE_ID) # a list of dates to skip in the future.. , regress on these dates with dummy, but remove dates and vals from horizon when returning (future release)
-	future_skiplist<-as.Date(future_skiplist,format="%d/%m/%Y") # ensure formatting ok
-	holidayf<-c(rep(0,hor))  # initialise to 0
-	holidayf[match(future_skiplist,horiz_dates)]<-1 # set to 1 if in horizdates
 
+	# fill in missing dates in time-series and create new holiday vector to specify where missing dates were found
 	results_ts_df<-set_missing_values(DATE_ID,actuals, freq_type) # sets
-	DATE_ID<-results_ts_df$Date  # new dates
+	DATE_ID<-results_ts_df$date  # new dates
 	actuals<-results_ts_df$value # new actuals (may contain zeros)
 	holiday<-results_ts_df$holiday # vector of 1 or 0 for missed values.. 
-	len_holiday<-length(holiday[holiday==1])
+	len_holiday<-length(holiday[holiday==1]) # diagnostic
 	len_holidayf<-length(holidayf[holidayf==1])
 
-	if(variables_error_value==1){  # update xreg
-		xreg_select<-set_missing_values_xreg(xreg_select,freq_type) # update missing dates in xreg_select
-	}
-		
 	if (length(holiday[holiday==1]) != 0 & length(holiday[holiday==0]) != 0){ # ie not a column of zeros or 1
+		# create future holiday vector of 0s, and 1 where holiday expected (skiplist dates)
+		holidayf<-c(rep(0,hor))  # initialise to 0
+		holidayf[match(future_skiplist,horiz_dates)]<-1 # set to 1 if in horiz_dates
 		holiday_flag<-1
-		if(variables_error_value==1){
+		
+		# no errors found in input variable_matrix and at least 1 variable
+		if(variables_error_flag==0){ 
+			xreg_select<-set_missing_values_xreg(xreg_select,freq_type) # fill in missing dates in xreg_select, (recall, already checked xreg dates match timeseries dates)
 			xreg_select<-cbind(xreg_select,holiday) ## holiday has FULL Dates, xreg_select has one date missing # think its ok
 			new_xreg_select<-cbind(new_xreg_select,holidayf) # add extra variable column as future "skips"
-		} else{
+		} else{ # xreg_select = NULL at this point
 			xreg_select<-cbind(DATE_ID,holiday)
 			new_xreg_select<-cbind(horiz_dates,holidayf)
 		}
