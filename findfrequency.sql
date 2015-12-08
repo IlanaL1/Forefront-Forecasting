@@ -1,42 +1,30 @@
---- Name: missingValues
+--- Name: findfrequency
 --- Pre-conditions:
 --- Post-conditions:
 --- Function: Estimate spacing between dates and frequency(ies) of the time-series. 
+--- R utility.forecast functions: guess_period, type_to_descrip, type_to_short_freq, type_to_long_freq
 DROP PROCEDURE findfrequency;
-CREATE PROCEDURE findfrequency(IN timeseries "timeSeriesInput2", IN param "paramTable", IN variable_matrix "variableMatrix", IN future_skip "skiplist", OUT fit_result "forecastFitted", OUT horizon_result "forecastHorizon", OUT actuals_table "actuals", OUT diagnostic_result "diagnosticResult", OUT accuracy_result "accuracy")
+CREATE PROCEDURE findfrequency(IN timeseries "timeSeriesInput2", IN param "paramTable", OUT diagnostic_result_findfrequency "diagnosticResultFindFrequency")
 LANGUAGE RLANG AS
 --DEFAULT SCHEMA HDITTMER            
 BEGIN
 
+library("utility.forecast")
+library("forecast") # findfrequency
+
 #### Get Input Parameters from Tables
 # timeseries
-DATE_ID_original=c(timeseries$DATE_ID)
-actuals_original=c(timeseries$TOTAL)
+DATE_ID=c(timeseries$DATE_ID)
+actuals=c(timeseries$TOTAL)
 
 #param
 parameters_key<-c(param$KEY)
 parameters_value<-c(param$VALUE)
 parameters<-data.frame(parameters_key, parameters_value)
 colnames(parameters)<-c("key", "value")
-smooth=parameters$value[parameters$key %in% "SMOOTH"]
-hor=parameters$value[parameters$key %in% "HORIZON"]
 num_var=parameters$value[parameters$key %in% "NUM_VAR"]
-freq=parameters$value[parameters$key %in% "FREQUENCY"]
 ## UI drop-down menu - 1. daily, 2. daily - business days only, 3. weekly, 4. monthly, 5. quarterly, 6. annual
-user_input_freq=parameters$value[parameters$key %in% "FREQUENCY_TYPE"] 
-
-#### sort time series by date
-sorted_df<-sort_data_frame_by_date(DATE_ID_original,actuals_original)
-DATE_ID<-sorted_df$date 
-actuals<-sorted_df$value
-
-#### smooth if necessary
-if(smooth==1){
-	actuals_MA<-rollapply(actuals,FUN=mean,width=4,na.rm=TRUE,align="left") #can use align = left.. #rollmean 
-  	actuals<-actuals_MA
-}
-last_actual_value<-actuals[length(actuals)] #diagnostic
-len_time_series<-length(actuals) 
+user_input_spacing=parameters$value[parameters$key %in% "FREQUENCY_TYPE"] 
 
 #### Estimate period (spacing) between dates
 DATE_ID1<-as.Date(DATE_ID,"%Y-%m-%d")
@@ -61,31 +49,33 @@ spacing_descrip<-type_to_descrip(spacing_type)
 freq_estimate_long_default<--1 # default
 freq_estimate_long_default<-type_to_annual_freq(spacing_type)
 
+freq_estimate_short_default<--1 # default
+num_freq<-1
+
 #### Return estimates for short and long frequency
 if (spacing_type==1 | spacing_type==2) {
-
-	freq_estimate_short_default<--1 # default
-	freq_estimate_short_default<-type_to_short_freq(spacing_type)
+	freq_estimate_short_default<-type_to_short_freq(spacing_type) # 5 or 7 day
 
   	if(length(actuals)<(2*freq_estimate_long_default)) { # less than two periods, not going to compare for long (365 day) frequency,auto.arima drops seasonal if no good
     	freq_estimate_short <- findfrequency(actuals)  
-    	freq_estimate_long<- -1 # no long frequency 
-    	freq_estimate_default_long<- -1    
-		
+    	freq_estimate_long<- -1 # no second sub-frequency 
+    	freq_estimate_long_default<- -1    
+		num_freq<-1
 	}else{   ## possibly 2 (or more) frequencies 
-    	freq_estimate_short <- findfrequency(actuals[1:182]) ## allow shorter frequency
+    	freq_estimate_short <- findfrequency(actuals[1:floor(freq_estimate_long_default/2)]) ## detect frequency in short stretch
     	freq_estimate_long <- findfrequency(actuals)
+    	num_freq<-2 
   	}  #end else
   	
-}else{ # end if spacing_type..
+}else{ # weekly,monthly,quarterly,annual
 	freq_estimate_short<- -1
 	freq_estimate_short_default <- -1
-	freq_estimate_long <- findfrequency(actuals) 
-	freq_estimate_long_default
+	freq_estimate_long <- findfrequency(actuals)
+	num_freq<-1
 }  
 
 # if not equal, prompt warning if difference between estimate and default less than 20% of default value
-prompt_default_short<-0 #defaults
+prompt_default_short<-0 #defaults, no user prompt that different frequency detect
 prompt_default_long<-0       
 if (freq_estimate_short != freq_estimate_short_default){
 	if (abs(freq_estimate_short_default-freq_estimate_short)/freq_estimate_short_default) < 0.2 # error within 
@@ -98,14 +88,17 @@ if (freq_estimate_long != freq_estimate_long_default){
   	
 # if no warning, use estimate... 
 
-diagnostic_result<-data.frame(
+diagnostic_result_findfrequency<-data.frame(
 SPACING_WARNING=spacing_warning,
-FREQ_ESTIMATE_LONG=freq_estimate_long,
+SPACING_ESTIMATE=spacing_estimate,
+SPACING_TYPE=spacing_type, 
 FREQ_ESTIMATE_SHORT=freq_estimate_short,
-DEFAULT_ESTIMATE_LONG=freq_estimate_long_default,
+FREQ_ESTIMATE_LONG=freq_estimate_long,
 DEFAULT_ESTIMATE_SHORT=freq_estimate_short_default,
-PROMPT_DEFAULT_LONG=prompt_default_long
-PROMPT_DEFAULT_SHORT=prompt_default_short
+DEFAULT_ESTIMATE_LONG=freq_estimate_long_default,
+PROMPT_DEFAULT_SHORT=prompt_default_short,
+PROMPT_DEFAULT_LONG=prompt_default_long,
+NUM_FREQ=num_freq
 )
 
 END;
