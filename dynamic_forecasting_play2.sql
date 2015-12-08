@@ -1,11 +1,11 @@
 -- Instructions: 
 -- Run create_tables: create new forecastHorizon and diagnosticResult table before running each test case
---TS01
+--TC01
 CALL executeRForecast("DS1_01","paramTable", "variableMatrix","skiplist","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
 SELECT * FROM "forecastHorizon";
 SELECT * FROM "diagnosticResult";
 
---TS02
+--TC02
 DROP TABLE "variableMatrix_DS01_01";
 CREATE TABLE "variableMatrix_DS01_01" as (SELECT DATE_ID AS DATEI,TEMP as "VAR1",TEMP as "VAR2",TEMP as "VAR3" FROM "ILANA"."North_filtered_weather" WHERE DATE_ID >'2004-10-30' ORDER BY DATE_ID);
 CALL executeRForecast("DS1_01","paramTable1", "variableMatrix_DS01_01","skiplist","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
@@ -13,32 +13,32 @@ SELECT * FROM "forecastHorizon";
 SELECT * FROM "diagnosticResult";
 SELECT * FROM "accuracy";
 
---TS03
+--TC03
 CALL executeRForecast("DS1_01","paramTable2", "variableMatrix_DS01_01","skiplist","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
 SELECT * FROM "forecastHorizon";
 SELECT * FROM "diagnosticResult";
 
---TS04
+--TC04 - duplicate new_xreg
 DROP TABLE "variableMatrix_DS01_02";
 CREATE TABLE "variableMatrix_DS01_02" as (SELECT * FROM "variableMatrix_DS01_01" ORDER BY DATEI);
-UPSERT "variableMatrix_DS01_02" VALUES ('2005-01-30',3,4,5) where DATEI='2005-01-30';
+UPSERT "variableMatrix_DS01_02" VALUES ('2005-01-30',3,4,5) where DATEI='2005-01-30'; -- xreg is not duplicate
 SELECT * FROM "variableMatrix_DS01_02" where DATEI > '2005-01-20' ORDER BY DATEI;
 
 CALL executeRForecast("DS1_01","paramTable2", "variableMatrix_DS01_02","skiplist","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
 SELECT * FROM "forecastHorizon";
 SELECT * FROM "diagnosticResult";
 
---TS05
+--TC05 - duplicate xreg
 DROP TABLE "variableMatrix_DS01_03";
 CREATE TABLE "variableMatrix_DS01_03" as (SELECT * FROM "variableMatrix_DS01_01" ORDER BY DATEI);
-UPSERT "variableMatrix_DS01_03" VALUES ('2005-01-02',3,4,5) where DATEI='2005-01-02';
+UPSERT "variableMatrix_DS01_03" VALUES ('2005-01-02',3,4,5) where DATEI='2005-01-02'; -- newxreg is not duplicate
 SELECT * FROM "variableMatrix_DS01_03" where DATEI > '2005-01-01' ORDER BY DATEI;
 
 CALL executeRForecast("DS1_01","paramTable2", "variableMatrix_DS01_03","skiplist","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
 SELECT * FROM "forecastHorizon";
 SELECT * FROM "diagnosticResult";
 
---TS06 
+--TC06 
 DROP TABLE "variableMatrix_DS01_04";
 CREATE TABLE "variableMatrix_DS01_04" as (SELECT * FROM "variableMatrix_DS01_01" where DATEI!='2005-01-03' ORDER BY DATEI);
 SELECT * FROM "variableMatrix_DS01_04" where DATEI > '2005-01-01' ORDER BY DATEI;
@@ -47,7 +47,7 @@ CALL executeRForecast("DS1_01","paramTable2", "variableMatrix_DS01_04","skiplist
 SELECT * FROM "forecastHorizon";
 SELECT * FROM "diagnosticResult";
 
---TS07 
+--TC07 
 DROP TABLE "variableMatrix_DS01_05";
 CREATE TABLE "variableMatrix_DS01_05" as (SELECT * FROM "variableMatrix_DS01_01" where DATEI!='2005-02-03' ORDER BY DATEI);
 SELECT * FROM "variableMatrix_DS01_05" where DATEI > '2005-01-01' ORDER BY DATEI;
@@ -64,21 +64,21 @@ SELECT * FROM "diagnosticResult";
 
 -- Business Days only Tests...(missing holidays)
 --DS02
--- TS01
+-- TC01
 CALL executeRForecast("DS2_01","paramTable3", "variableMatrix","skiplist","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
 SELECT * FROM "forecastHorizon";
 SELECT * FROM "actuals";
 SELECT * FROM "diagnosticResult";
 SELECT * FROM "accuracy";
 
---TS02
+--TC02
 CALL executeRForecast("DS2_01","paramTable3", "variableMatrix","skiplist1","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
 SELECT * FROM "forecastHorizon";
 SELECT * FROM "actuals";
 SELECT * FROM "diagnosticResult";
 SELECT * FROM "accuracy";
 
---TS03 -- shouldnt be able to use variableMatrix2 because not the same dates.. should R retrieve them?
+--TC03 -- shouldnt be able to use variableMatrix2 because not the same dates.. should R retrieve them?
 DROP TABLE "variableMatrix_DS02_01";
 CREATE TABLE "variableMatrix_DS02_01" as (SELECT DATE_ID AS DATEI,TEMP as "VAR1",TEMP as "VAR2",TEMP as "VAR3" FROM "ILANA"."North_filtered_weather" WHERE DATE_ID >'1979-01-01' ORDER BY DATE_ID);
 CALL executeRForecast("DS2_01","paramTable4", "variableMatrix_DS02_01","skiplist","forecastFitted","forecastHorizon","actuals","diagnosticResult","accuracy") WITH OVERVIEW;
